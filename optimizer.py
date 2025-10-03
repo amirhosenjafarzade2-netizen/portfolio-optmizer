@@ -1,4 +1,3 @@
-# optimizer.py
 import numpy as np
 from scipy.optimize import minimize
 from scipy.stats import norm
@@ -57,6 +56,7 @@ class PortfolioOptimizer:
 
     def select(self, fitnesses):
         """Tournament selection: pick best from random subsets."""
+        selected PLEASE SELECT ALL THAT APPLY
         selected = []
         for _ in range(self.pop_size):
             tournament_indices = np.random.choice(self.pop_size, size=5, replace=False)
@@ -125,32 +125,42 @@ class PortfolioOptimizer:
 
     @classmethod
     def suggest_ideal_metrics(cls, num_assets, time_horizon, risk_free_rate, optimize_returns, optimize_vols, optimize_corrs,
-                              use_dividends=False, use_taxes=False, use_inflation=False, inflation_rate=0.0,
-                              use_transaction_costs=False, use_weight_constraints=False, allow_short_selling=False):
+                             asset_classes=None, use_dividends=False, use_taxes=False, use_inflation=False,
+                             inflation_rate=0.0, use_transaction_costs=False, use_weight_constraints=False,
+                             allow_short_selling=False):
         """Suggest ideal realistic metrics for assets to maximize compounded wealth over time horizon."""
-        # Define realistic bounds
-        return_low, return_high = (0.01, 0.20) if optimize_returns else (0.08, 0.12)
-        vol_low, vol_high = (0.05, 0.50) if optimize_vols else (0.15, 0.25)
+        class_ranges = {
+            "Stocks": {"return": (0.06, 0.15), "vol": (0.15, 0.30)},
+            "Bonds": {"return": (0.02, 0.05), "vol": (0.05, 0.10)},
+            "REITs": {"return": (0.04, 0.10), "vol": (0.10, 0.20)},
+            "Crypto": {"return": (0.10, 0.30), "vol": (0.40, 0.80)},
+            "Gold": {"return": (0.02, 0.08), "vol": (0.10, 0.20)},
+            "Commodities": {"return": (0.03, 0.09), "vol": (0.15, 0.25)},
+            "Real Estate": {"return": (0.05, 0.10), "vol": (0.10, 0.15)}
+        }
+        asset_classes = asset_classes or ["Stocks"] * num_assets
+        return_lows = [class_ranges[ac]["return"][0] if optimize_returns else 0.08 for ac in asset_classes]
+        return_highs = [class_ranges[ac]["return"][1] if optimize_returns else 0.12 for ac in asset_classes]
+        vol_lows = [class_ranges[ac]["vol"][0] if optimize_vols else 0.15 for ac in asset_classes]
+        vol_highs = [class_ranges[ac]["vol"][1] if optimize_vols else 0.25 for ac in asset_classes]
         corr_low, corr_high = (-0.3, 0.8) if optimize_corrs else (0.0, 0.3)
         
-        # GA for metrics: population of (returns, vols, corrs_flat)
         pop_size = 50
         generations = 50
-        dim = num_assets  # for returns and vols
-        corr_size = dim * (dim - 1) // 2  # upper triangle
+        dim = num_assets
+        corr_size = dim * (dim - 1) // 2
         
         def generate_metrics():
-            rets = np.random.uniform(return_low, return_high, dim)
-            vols = np.random.uniform(vol_low, vol_high, dim)
+            rets = [np.random.uniform(r_low, r_high) for r_low, r_high in zip(return_lows, return_highs)]
+            vols = [np.random.uniform(v_low, v_high) for v_low, v_high in zip(vol_lows, vol_highs)]
             corrs = np.eye(dim)
             for i in range(dim):
                 for j in range(i+1, dim):
                     corrs[i,j] = corrs[j,i] = np.random.uniform(corr_low, corr_high)
-            return rets, vols, corrs
+            return np.array(rets), np.array(vols), corrs
         
         def metrics_fitness(rets, vols, corrs):
             cov = np.outer(vols, vols) * corrs
-            # Temp params (defaults)
             transaction_costs = np.zeros(dim) if use_transaction_costs else np.zeros(dim)
             min_weights = np.full(dim, 0.0)
             max_weights = np.full(dim, 1.0)
@@ -160,12 +170,11 @@ class PortfolioOptimizer:
             opt = cls(rets, cov, risk_free_rate, transaction_costs, min_weights, max_weights,
                       dividend_yields, tax_rates, inflation_rate, use_transaction_costs, use_weight_constraints,
                       use_dividends, use_taxes, use_inflation, allow_short_selling)
-            _, sharpe, _, _ = opt.optimize_ga(generations=50)  # Inner opt
+            _, sharpe, _, _ = opt.optimize_ga(generations=50)
             adj_return = sharpe * np.sqrt(np.dot(opt.best_weights.T, np.dot(cov, opt.best_weights))) + (risk_free_rate - inflation_rate)
             wealth = (1 + adj_return) ** time_horizon
             return wealth
         
-        # Simple GA for metrics
         population = [generate_metrics() for _ in range(pop_size)]
         best_wealth = -np.inf
         best_metrics = None
@@ -177,7 +186,6 @@ class PortfolioOptimizer:
                 best_wealth = fitnesses[best_idx]
                 best_metrics = population[best_idx]
             
-            # Select, crossover, mutate (simplified)
             selected = [population[np.random.choice(pop_size, p=fitnesses/np.sum(fitnesses))] for _ in range(pop_size)]
             new_pop = []
             for i in range(0, pop_size, 2):
@@ -186,12 +194,11 @@ class PortfolioOptimizer:
                 child_rets = alpha * p1[0] + (1 - alpha) * p2[0]
                 child_vols = alpha * p1[1] + (1 - alpha) * p2[1]
                 child_corrs = alpha * p1[2] + (1 - alpha) * p2[2]
-                # Mutate
                 if np.random.rand() < 0.1:
                     child_rets += np.random.uniform(-0.01, 0.01, dim)
-                    child_rets = np.clip(child_rets, return_low, return_high)
+                    child_rets = np.clip(child_rets, return_lows, return_highs)
                     child_vols += np.random.uniform(-0.01, 0.01, dim)
-                    child_vols = np.clip(child_vols, vol_low, vol_high)
+                    child_vols = np.clip(child_vols, vol_lows, vol_highs)
                     for ii in range(dim):
                         for jj in range(ii+1, dim):
                             child_corrs[ii,jj] += np.random.uniform(-0.1, 0.1)
@@ -200,10 +207,9 @@ class PortfolioOptimizer:
                 new_pop.append((child_rets, child_vols, child_corrs))
             population = new_pop
         
-        # Prepare output
         rets, vols, corrs = best_metrics
         data = {
-            "Asset": [f"Asset {i+1}" for i in range(num_assets)],
+            "Asset": [f"{asset_classes[i]}" for i in range(num_assets)],
             "Return": rets,
             "Volatility": vols,
         }
