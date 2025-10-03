@@ -5,6 +5,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import json
+from stochastic import simulate_scenarios
+from multiperiod import multiperiod_simulation
+from options_greeks import calculate_portfolio_greeks
 
 # Set page config for better appearance
 st.set_page_config(page_title="Portfolio Optimizer", layout="wide")
@@ -23,8 +26,8 @@ st.warning("This is for educational purposes only. Not financial advice. Consult
 # Save/Load inputs
 col1, col2 = st.columns(2)
 with col1:
-    # Filter session state to include only serializable keys (num_assets, asset_names, ret_*, vol_*, div_*, tax_*, corr_*_*)
-    serializable_state = {k: v for k, v in st.session_state.items() if k.startswith(('num_assets', 'asset_names', 'ret_', 'vol_', 'div_', 'tax_', 'corr_'))}
+    # Filter session state to include only serializable keys
+    serializable_state = {k: v for k, v in st.session_state.items() if k.startswith(('num_assets', 'asset_names', 'ret_', 'vol_', 'div_', 'tax_', 'corr_', 'price_', 'strike_', 'ttm_', 'ivol_', 'opt_type_'))}
     st.download_button("Save Inputs", data=json.dumps(serializable_state), file_name="portfolio_inputs.json")
 with col2:
     uploaded_file = st.file_uploader("Load Inputs", type="json")
@@ -32,7 +35,7 @@ with col2:
         try:
             data = json.load(uploaded_file)
             # Only update valid keys to avoid injecting unexpected data
-            valid_keys = set(st.session_state.keys()) | set(['num_assets', 'asset_names'] + [f'ret_{i}' for i in range(10)] + [f'vol_{i}' for i in range(10)] + [f'div_{i}' for i in range(10)] + [f'tax_{i}' for i in range(10)] + [f'corr_{i}_{j}' for i in range(10) for j in range(i+1, 10)])
+            valid_keys = set(st.session_state.keys()) | set(['num_assets', 'asset_names'] + [f'ret_{i}' for i in range(10)] + [f'vol_{i}' for i in range(10)] + [f'div_{i}' for i in range(10)] + [f'tax_{i}' for i in range(10)] + [f'corr_{i}_{j}' for i in range(10) for j in range(i+1, 10)] + [f'price_{i}' for i in range(10)] + [f'strike_{i}' for i in range(10)] + [f'ttm_{i}' for i in range(10)] + [f'ivol_{i}' for i in range(10)] + [f'opt_type_{i}' for i in range(10)])
             for k, v in data.items():
                 if k in valid_keys:
                     st.session_state[k] = v
@@ -140,6 +143,11 @@ with st.expander("Per Asset Metrics", expanded=True):
     volatilities = []
     dividend_yields = []
     tax_rates = []
+    asset_prices = []
+    strike_prices = []
+    times_to_maturity = []
+    implied_vols = []
+    option_types = []
     cols = st.columns(2)
     for i, asset in enumerate(asset_names):
         with cols[i % 2]:
@@ -172,10 +180,52 @@ with st.expander("Per Asset Metrics", expanded=True):
                 max_value=1.0,
                 key=f"tax_{i}"
             ) if use_tax_rate else 0.0
+            use_options_greeks = st.checkbox("Use Options Greeks", value=False, help="Calculate Greeks for options on each asset.")
+            if use_options_greeks:
+                asset_price = st.number_input(
+                    f"Current asset price",
+                    value=100.0,
+                    min_value=0.01,
+                    key=f"price_{i}"
+                )
+                strike_price = st.number_input(
+                    f"Option strike price",
+                    value=100.0,
+                    min_value=0.01,
+                    key=f"strike_{i}"
+                )
+                time_to_maturity = st.number_input(
+                    f"Time to maturity (years)",
+                    value=1.0,
+                    min_value=0.01,
+                    max_value=10.0,
+                    key=f"ttm_{i}"
+                )
+                implied_vol = st.number_input(
+                    f"Implied volatility (decimal)",
+                    value=vol,
+                    min_value=0.01,
+                    max_value=1.0,
+                    key=f"ivol_{i}"
+                )
+                option_type = st.selectbox(
+                    f"Option type",
+                    ["call", "put"],
+                    index=0,
+                    key=f"opt_type_{i}"
+                )
+            else:
+                asset_price = strike_price = time_to_maturity = implied_vol = None
+                option_type = "call"
             expected_returns.append(exp_ret)
             volatilities.append(vol)
             dividend_yields.append(div_yield)
             tax_rates.append(tax_rate)
+            asset_prices.append(asset_price)
+            strike_prices.append(strike_price)
+            times_to_maturity.append(time_to_maturity)
+            implied_vols.append(implied_vol)
+            option_types.append(option_type)
 
 # Correlation Matrix
 with st.expander("Correlation Matrix", expanded=False):
@@ -220,6 +270,7 @@ if scale == 0.01:
     tax_rates = [t * scale for t in tax_rates]
     inflation *= scale
     risk_free_rate *= scale
+    implied_vols = [v * scale if v is not None else None for v in implied_vols]
 
 # Number of iterations
 iterations = st.number_input(
@@ -289,6 +340,14 @@ if st.button("Optimize Portfolio"):
                 max_weight=max_weight if use_constraints else None
             )
             progress_bar.progress(0.5)
+
+            if use_options_greeks and all(v is not None for v in asset_prices + strike_prices + times_to_maturity + implied_vols):
+                greeks = calculate_portfolio_greeks(
+                    weights, np.array(asset_prices), np.array(strike_prices),
+                    np.array(times_to_maturity), np.array(implied_vols),
+                    risk_free_rate, option_types
+                )
+                metrics.update(greeks)
 
             if use_stochastic:
                 from stochastic import simulate_scenarios
