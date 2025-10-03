@@ -23,14 +23,22 @@ st.warning("This is for educational purposes only. Not financial advice. Consult
 # Save/Load inputs
 col1, col2 = st.columns(2)
 with col1:
-    st.download_button("Save Inputs", data=json.dumps(st.session_state), file_name="portfolio_inputs.json")
+    # Filter session state to include only serializable keys (num_assets, asset_names, ret_*, vol_*, div_*, tax_*, corr_*_*)
+    serializable_state = {k: v for k, v in st.session_state.items() if k.startswith(('num_assets', 'asset_names', 'ret_', 'vol_', 'div_', 'tax_', 'corr_'))}
+    st.download_button("Save Inputs", data=json.dumps(serializable_state), file_name="portfolio_inputs.json")
 with col2:
     uploaded_file = st.file_uploader("Load Inputs", type="json")
     if uploaded_file:
-        data = json.load(uploaded_file)
-        for k, v in data.items():
-            st.session_state[k] = v
-        st.rerun()
+        try:
+            data = json.load(uploaded_file)
+            # Only update valid keys to avoid injecting unexpected data
+            valid_keys = set(st.session_state.keys()) | set(['num_assets', 'asset_names'] + [f'ret_{i}' for i in range(10)] + [f'vol_{i}' for i in range(10)] + [f'div_{i}' for i in range(10)] + [f'tax_{i}' for i in range(10)] + [f'corr_{i}_{j}' for i in range(10) for j in range(i+1, 10)])
+            for k, v in data.items():
+                if k in valid_keys:
+                    st.session_state[k] = v
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error loading inputs: {str(e)}")
 
 # Reset button
 if st.button("Reset All Inputs"):
