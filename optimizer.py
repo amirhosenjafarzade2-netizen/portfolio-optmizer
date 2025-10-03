@@ -40,7 +40,8 @@ def optimize_portfolio(method, expected_returns, volatilities, correlations, div
     if use_inflation:
         metrics['Real Return'] = portfolio_return - inflation
     if use_tax_rate:
-        after_tax_return = portfolio_return * (1 - tax_rate) + portfolio_dividend * tax_rate
+        # Calculate after-tax return for each asset and aggregate
+        after_tax_return = np.sum(weights * (expected_returns * (1 - tax_rate) + dividend_yields * tax_rate))
         metrics['After-Tax Return'] = after_tax_return
     if use_sharpe:
         metrics['Sharpe Ratio'] = (portfolio_return - risk_free_rate) / portfolio_volatility if portfolio_volatility > 0 else 0.0
