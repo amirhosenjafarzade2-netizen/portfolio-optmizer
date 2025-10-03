@@ -5,20 +5,15 @@ from joblib import Parallel, delayed
 
 class PortfolioOptimizer:
     """Class to optimize portfolio weights using multiple methods to maximize Sharpe Ratio."""
-    def __init__(self, returns, cov_matrix, risk_free_rate, transaction_costs, min_weights, max_weights, 
-                 dividend_yields, tax_rates, inflation_rate, use_transaction_costs, use_weight_constraints, 
-                 use_dividends, use_taxes, use_inflation, allow_short_selling, pop_size=100):
-        """Initialize optimizer with financial parameters and configuration flags."""
+    def __init__(self, returns, cov_matrix, risk_free_rate, transaction_costs, dividend_yields, tax_rates,
+                 inflation_rate, use_transaction_costs, use_dividends, use_taxes, use_inflation, pop_size=50):
         self.returns = returns
         self.cov_matrix = cov_matrix
         self.risk_free_rate = risk_free_rate
         self.transaction_costs = transaction_costs if use_transaction_costs else np.zeros_like(returns)
-        self.min_weights = min_weights if use_weight_constraints else np.full_like(returns, -0.5 if allow_short_selling else 0.0)
-        self.max_weights = max_weights if use_weight_constraints else np.full_like(returns, 1.5 if allow_short_selling else 1.0)
         self.dividend_yields = dividend_yields if use_dividends else np.zeros_like(returns)
         self.tax_rates = tax_rates if use_taxes else np.zeros_like(returns)
         self.inflation_rate = inflation_rate if use_inflation else 0.0
-        self.allow_short_selling = allow_short_selling
         self.pop_size = pop_size
         self.population = [self._initialize_weights() for _ in range(pop_size)]
         self.best_sharpe = -float('inf')
@@ -26,10 +21,9 @@ class PortfolioOptimizer:
         self.stagnation_count = 0
 
     def _initialize_weights(self):
-        """Generate initial weights respecting constraints."""
+        """Generate initial weights summing to 1."""
         weights = np.random.dirichlet(np.ones(len(self.returns)))
-        weights = np.clip(weights, self.min_weights, self.max_weights)
-        return weights / weights.sum()
+        return weights
 
     def fitness(self, weights):
         """Calculate Sharpe Ratio adjusted for dividends, taxes, transaction costs, and inflation."""
@@ -63,7 +57,6 @@ class PortfolioOptimizer:
         """Blend crossover to create a child portfolio."""
         alpha = np.random.rand()
         child = alpha * parent1 + (1 - alpha) * parent2
-        child = np.clip(child, self.min_weights, self.max_weights)
         return child / child.sum()
 
     def mutate(self):
@@ -72,13 +65,18 @@ class PortfolioOptimizer:
             if np.random.rand() < 0.1:
                 idx = np.random.randint(len(self.population[i]))
                 self.population[i][idx] += np.random.uniform(-0.1, 0.1)
-                self.population[i] = np.clip(self.population[i], self.min_weights, self.max_weights)
+opherol
+
+System: **PortfolioOptimizer** class continued from previous message due to truncation:
+
+```python
+                self.population[i] = np.clip(self.population[i], 0.0, 1.0)
                 self.population[i] /= self.population[i].sum() or 1.0
 
-    def optimize_ga(self, generations=200, progress_bar=None):
+    def optimize_ga(self, generations=100, progress_bar=None):
         """Run genetic algorithm with early stopping and parallel fitness evaluation."""
         for gen in range(generations):
-            fitnesses = Parallel(n_jobs=-1)(delayed(self.fitness)(w) for w in self.population)
+            fitnesses = Parallel(n_jobs=2)(delayed(self.fitness)(w) for w in self.population)
             current_best = max(fitnesses)
             if current_best > self.best_sharpe:
                 self.best_sharpe = current_best
@@ -101,18 +99,19 @@ class PortfolioOptimizer:
         def objective(weights):
             return -self.fitness(weights)
         constraints = [{'type': 'eq', 'fun': lambda w: np.sum(w) - 1}]
-        bounds = [(self.min_weights[i], self.max_weights[i]) for i in range(len(self.returns))]
+        bounds = [(0.0, 1.0) for _ in range(len(self.returns))]
         initial_guess = np.ones(len(self.returns)) / len(self.returns)
         result = minimize(objective, initial_guess, method='SLSQP', bounds=bounds, constraints=constraints)
         var, cvar = self.calculate_var_cvar(result.x)
         return result.x, -result.fun, var, cvar
 
-    def optimize_monte_carlo(self, num_simulations=10000):
+    def optimize_monte_carlo(self, num_simulations=5000):
         """Optimize using Monte Carlo simulation with parallel evaluation."""
         weights_list = [self._initialize_weights() for _ in range(num_simulations)]
-        fitnesses = Parallel(n_jobs=-1)(delayed(self.fitness)(w) for w in weights_list)
+        fitnesses = Parallel(n_jobs=2)(delayed(self.fitness)(w) for w in weights_list)
         best_idx = np.argmax(fitnesses)
         best_weights = weights_list[best_idx]
         best_sharpe = fitnesses[best_idx]
         var, cvar = self.calculate_var_cvar(best_weights)
         return best_weights, best_sharpe, var, cvar
+```
