@@ -1,55 +1,73 @@
-# app.py
 import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import io
 from optimizer import PortfolioOptimizer
+from session_manager import SessionStateManager
+from pdf_generator import generate_pdf_report
 
 st.set_page_config(page_title="Portfolio Optimizer", layout="wide")
 st.title("Portfolio Optimization Tool")
 
-# Session state manager
-class SessionStateManager:
-    """Manage Streamlit session state initialization and updates."""
-    def __init__(self):
-        defaults = {
-            'asset_names': [],
-            'returns': [],
-            'volatilities': [],
-            'correlations': np.array([]),
-            'transaction_costs': [],
-            'min_weights': [],
-            'max_weights': [],
-            'dividend_yields': [],
-            'tax_rates': [],
-            'use_transaction_costs': False,
-            'use_weight_constraints': False,
-            'use_dividends': False,
-            'use_taxes': False,
-            'use_inflation': False,
-            'inflation_rate': 0.0,
-            'allow_short_selling': False
-        }
-        for key, value in defaults.items():
-            if key not in st.session_state:
-                st.session_state[key] = value
-
-    def update(self, num_assets):
-        """Update session state for a given number of assets."""
-        if len(st.session_state.asset_names) != num_assets:
-            st.session_state.asset_names = [f"Asset {i+1}" for i in range(num_assets)] if not st.session_state.asset_names else st.session_state.asset_names[:num_assets]
-            st.session_state.returns = [0.1] * num_assets if not st.session_state.returns else st.session_state.returns[:num_assets]
-            st.session_state.volatilities = [0.2] * num_assets if not st.session_state.volatilities else st.session_state.volatilities[:num_assets]
-            st.session_state.correlations = np.eye(num_assets) if st.session_state.correlations.size == 0 else st.session_state.correlations[:num_assets, :num_assets]
-            st.session_state.transaction_costs = [0.0] * num_assets if not st.session_state.transaction_costs else st.session_state.transaction_costs[:num_assets]
-            st.session_state.min_weights = [0.0] * num_assets if not st.session_state.min_weights else st.session_state.min_weights[:num_assets]
-            st.session_state.max_weights = [1.0] * num_assets if not st.session_state.max_weights else st.session_state.max_weights[:num_assets]
-            st.session_state.dividend_yields = [0.0] * num_assets if not st.session_state.dividend_yields else st.session_state.dividend_yields[:num_assets]
-            st.session_state.tax_rates = [0.0] * num_assets if not st.session_state.tax_rates else st.session_state.tax_rates[:num_assets]
-
 # Initialize session state
 state_manager = SessionStateManager()
+
+# Beginner mode toggle
+beginner_mode = st.checkbox("Beginner Mode", value=False, help="Simplify inputs with defaults for new users.")
+if beginner_mode:
+    st.session_state.use_transaction_costs = False
+    st.session_state.use_dividends = False
+    st.session_state.use_taxes = False
+    st.session_state.use_inflation = False
+    st.session_state.use_weight_constraints = False
+    st.session_state.allow_short_selling = False
+
+# Asset Class Templates
+template_options = {
+    "None": None,
+    "Balanced Portfolio": {
+        'asset_names': ['Stocks', 'Bonds', 'REITs', 'Gold'],
+        'returns': [0.10, 0.04, 0.07, 0.05],
+        'volatilities': [0.20, 0.08, 0.15, 0.12],
+        'correlations': np.array([
+            [1.0, 0.2, 0.5, 0.1],
+            [0.2, 1.0, 0.3, 0.0],
+            [0.5, 0.3, 1.0, 0.2],
+            [0.1, 0.0, 0.2, 1.0]
+        ])
+    },
+    "Aggressive Growth": {
+        'asset_names': ['Stocks', 'Crypto', 'Emerging Markets'],
+        'returns': [0.10, 0.20, 0.12],
+        'volatilities': [0.20, 0.50, 0.30],
+        'correlations': np.array([
+            [1.0, 0.4, 0.6],
+            [0.4, 1.0, 0.3],
+            [0.6, 0.3, 1.0]
+        ])
+    },
+    "Diversified Income": {
+        'asset_names': ['Bonds', 'REITs', 'Real Estate', 'Commodities'],
+        'returns': [0.04, 0.07, 0.08, 0.06],
+        'volatilities': [0.08, 0.15, 0.12, 0.18],
+        'correlations': np.array([
+            [1.0, 0.3, 0.4, 0.2],
+            [0.3, 1.0, 0.5, 0.3],
+            [0.4, 0.5, 1.0, 0.2],
+            [0.2, 0.3, 0.2, 1.0]
+        ])
+    }
+}
+selected_template = st.selectbox("Load Asset Class Template", list(template_options.keys()), index=0)
+if selected_template != "None" and st.button("Apply Template"):
+    template = template_options[selected_template]
+    num_assets = len(template['asset_names'])
+    st.session_state.asset_names = template['asset_names']
+    st.session_state.returns = template['returns']
+    st.session_state.volatilities = template['volatilities']
+    st.session_state.correlations = template['correlations']
+    state_manager.update(num_assets)
 
 # Input format selection
 input_format = st.radio(
@@ -93,7 +111,7 @@ num_assets = st.number_input(
     step=1,
     help="Specify the number of assets in the portfolio (minimum 2)."
 )
-state_manager.update(num_assets)
+state_manager.update(num_assets, beginner_mode=beginner_mode)
 
 # Form for asset details
 with st.form("asset_details"):
@@ -104,13 +122,15 @@ with st.form("asset_details"):
             st.session_state.asset_names[i] = st.text_input(
                 f"Name of Asset {i+1}",
                 st.session_state.asset_names[i],
-                help="Enter a unique name for the asset (e.g., 'Apple', 'Stock1')."
+                help="Enter a unique name for the asset (e.g., 'Apple', 'Gold')."
             )
             label_return = f"Expected Annual Return for {st.session_state.asset_names[i]} ({input_format})"
             return_input = st.number_input(
                 label_return,
                 value=st.session_state.returns[i] * (100 if input_format.startswith("Percentage") else 1),
                 step=0.01,
+                min_value=0.0,
+                max_value=100.0 if input_format.startswith("Percentage") else 1.0,
                 help="Annual expected return (e.g., 0.15 or 15 for 15% return)."
             )
             st.session_state.returns[i] = return_input / 100 if input_format.startswith("Percentage") else return_input
@@ -120,100 +140,103 @@ with st.form("asset_details"):
                 value=st.session_state.volatilities[i] * (100 if input_format.startswith("Percentage") else 1),
                 step=0.01,
                 min_value=0.0,
+                max_value=100.0 if input_format.startswith("Percentage") else 1.0,
                 help="Annual standard deviation of returns (e.g., 0.2 or 20 for 20% volatility)."
             )
             st.session_state.volatilities[i] = vol_input / 100 if input_format.startswith("Percentage") else vol_input
 
-    st.write("### Correlation Matrix")
-    st.write("Enter correlations (upper triangle, values between -1 and 1, diagonal is 1)", help="Correlations measure how assets move together.")
-    corr_cols = st.columns(num_assets)
-    for row in range(num_assets):
-        for col in range(row, num_assets):
-            if row == col:
-                st.session_state.correlations[row, col] = 1.0
-            else:
-                with corr_cols[col]:
-                    st.session_state.correlations[row, col] = st.number_input(
-                        f"Corr {st.session_state.asset_names[row]} & {st.session_state.asset_names[col]}",
-                        value=float(st.session_state.correlations[row, col]),
-                        min_value=-1.0,
-                        max_value=1.0,
-                        step=0.1
-                    )
-                    st.session_state.correlations[col, row] = st.session_state.correlations[row, col]
+    if not beginner_mode:
+        st.write("### Correlation Matrix")
+        st.write("Enter correlations (upper triangle, values between -1 and 1, diagonal is 1)", help="Correlations measure how assets move together.")
+        corr_cols = st.columns(num_assets)
+        for row in range(num_assets):
+            for col in range(row, num_assets):
+                if row == col:
+                    st.session_state.correlations[row, col] = 1.0
+                else:
+                    with corr_cols[col]:
+                        st.session_state.correlations[row, col] = st.number_input(
+                            f"Corr {st.session_state.asset_names[row]} & {st.session_state.asset_names[col]}",
+                            value=float(st.session_state.correlations[row, col]),
+                            min_value=-1.0,
+                            max_value=1.0,
+                            step=0.1
+                        )
+                        st.session_state.correlations[col, row] = st.session_state.correlations[row, col]
 
-    # Normalize correlation matrix to ensure positive semi-definiteness
+    # Normalize correlation matrix
     eigenvalues = np.linalg.eigvals(st.session_state.correlations)
     if np.any(eigenvalues < 0):
-        st.session_state.correlations = np.corrcoef(st.session_state.correlations + np.eye(num_assets) * 1e-6)  # Small perturbation
+        st.session_state.correlations = np.corrcoef(st.session_state.correlations + np.eye(num_assets) * 1e-6)
 
-    st.write("### Optional Parameters")
-    with st.expander("Advanced Settings"):
-        st.session_state.use_transaction_costs = st.checkbox("Include Transaction Costs", value=st.session_state.use_transaction_costs)
-        if st.session_state.use_transaction_costs:
-            for i in range(num_assets):
-                st.session_state.transaction_costs[i] = st.number_input(
-                    f"Transaction Cost for {st.session_state.asset_names[i]} (as decimal, e.g., 0.001 for 0.1%)",
-                    value=st.session_state.transaction_costs[i],
-                    step=0.0001,
-                    min_value=0.0
-                )
+    if not beginner_mode:
+        st.write("### Optional Parameters")
+        with st.expander("Advanced Settings"):
+            st.session_state.use_transaction_costs = st.checkbox("Include Transaction Costs", value=st.session_state.use_transaction_costs)
+            if st.session_state.use_transaction_costs:
+                for i in range(num_assets):
+                    st.session_state.transaction_costs[i] = st.number_input(
+                        f"Transaction Cost for {st.session_state.asset_names[i]} (as decimal, e.g., 0.001 for 0.1%)",
+                        value=st.session_state.transaction_costs[i],
+                        step=0.0001,
+                        min_value=0.0
+                    )
 
-        st.session_state.use_weight_constraints = st.checkbox("Include Weight Constraints", value=st.session_state.use_weight_constraints)
-        st.session_state.allow_short_selling = st.checkbox("Allow Short Selling", value=st.session_state.allow_short_selling)
-        if st.session_state.use_weight_constraints:
-            for i in range(num_assets):
-                min_val = -0.5 if st.session_state.allow_short_selling else 0.0
-                max_val = 1.5 if st.session_state.allow_short_selling else 1.0
-                st.session_state.min_weights[i] = st.number_input(
-                    f"Minimum Weight for {st.session_state.asset_names[i]} (as decimal, e.g., 0.1 for 10%)",
-                    value=st.session_state.min_weights[i],
-                    min_value=min_val,
-                    max_value=max_val,
-                    step=0.01
-                )
-                st.session_state.max_weights[i] = st.number_input(
-                    f"Maximum Weight for {st.session_state.asset_names[i]} (as decimal, e.g., 0.5 for 50%)",
-                    value=st.session_state.max_weights[i],
-                    min_value=min_val,
-                    max_value=max_val,
-                    step=0.01
-                )
+            st.session_state.use_weight_constraints = st.checkbox("Include Weight Constraints", value=st.session_state.use_weight_constraints)
+            st.session_state.allow_short_selling = st.checkbox("Allow Short Selling", value=st.session_state.allow_short_selling)
+            if st.session_state.use_weight_constraints:
+                for i in range(num_assets):
+                    min_val = -0.5 if st.session_state.allow_short_selling else 0.0
+                    max_val = 1.5 if st.session_state.allow_short_selling else 1.0
+                    st.session_state.min_weights[i] = st.number_input(
+                        f"Minimum Weight for {st.session_state.asset_names[i]} (as decimal, e.g., 0.1 for 10%)",
+                        value=st.session_state.min_weights[i],
+                        min_value=min_val,
+                        max_value=max_val,
+                        step=0.01
+                    )
+                    st.session_state.max_weights[i] = st.number_input(
+                        f"Maximum Weight for {st.session_state.asset_names[i]} (as decimal, e.g., 0.5 for 50%)",
+                        value=st.session_state.max_weights[i],
+                        min_value=min_val,
+                        max_value=max_val,
+                        step=0.01
+                    )
 
-        st.session_state.use_dividends = st.checkbox("Include Dividend Yields", value=st.session_state.use_dividends)
-        if st.session_state.use_dividends:
-            for i in range(num_assets):
-                label_div = f"Dividend Yield for {st.session_state.asset_names[i]} ({input_format})"
-                div_input = st.number_input(
-                    label_div,
-                    value=st.session_state.dividend_yields[i] * (100 if input_format.startswith("Percentage") else 1),
+            st.session_state.use_dividends = st.checkbox("Include Dividend Yields", value=st.session_state.use_dividends)
+            if st.session_state.use_dividends:
+                for i in range(num_assets):
+                    label_div = f"Dividend Yield for {st.session_state.asset_names[i]} ({input_format})"
+                    div_input = st.number_input(
+                        label_div,
+                        value=st.session_state.dividend_yields[i] * (100 if input_format.startswith("Percentage") else 1),
+                        step=0.01,
+                        min_value=0.0
+                    )
+                    st.session_state.dividend_yields[i] = div_input / 100 if input_format.startswith("Percentage") else div_input
+
+            st.session_state.use_taxes = st.checkbox("Include Tax Rates", value=st.session_state.use_taxes)
+            if st.session_state.use_taxes:
+                for i in range(num_assets):
+                    label_tax = f"Tax Rate on Returns for {st.session_state.asset_names[i]} ({input_format})"
+                    tax_input = st.number_input(
+                        label_tax,
+                        value=st.session_state.tax_rates[i] * (100 if input_format.startswith("Percentage") else 1),
+                        step=0.01,
+                        min_value=0.0,
+                        max_value=100.0 if input_format.startswith("Percentage") else 1.0
+                    )
+                    st.session_state.tax_rates[i] = tax_input / 100 if input_format.startswith("Percentage") else tax_input
+
+            st.session_state.use_inflation = st.checkbox("Include Inflation Rate", value=st.session_state.use_inflation)
+            if st.session_state.use_inflation:
+                st.session_state.inflation_rate = st.number_input(
+                    f"Expected Inflation Rate ({input_format})",
+                    value=st.session_state.inflation_rate * (100 if input_format.startswith("Percentage") else 1),
                     step=0.01,
                     min_value=0.0
                 )
-                st.session_state.dividend_yields[i] = div_input / 100 if input_format.startswith("Percentage") else div_input
-
-        st.session_state.use_taxes = st.checkbox("Include Tax Rates", value=st.session_state.use_taxes)
-        if st.session_state.use_taxes:
-            for i in range(num_assets):
-                label_tax = f"Tax Rate on Returns for {st.session_state.asset_names[i]} ({input_format})"
-                tax_input = st.number_input(
-                    label_tax,
-                    value=st.session_state.tax_rates[i] * (100 if input_format.startswith("Percentage") else 1),
-                    step=0.01,
-                    min_value=0.0,
-                    max_value=100.0 if input_format.startswith("Percentage") else 1.0
-                )
-                st.session_state.tax_rates[i] = tax_input / 100 if input_format.startswith("Percentage") else tax_input
-
-        st.session_state.use_inflation = st.checkbox("Include Inflation Rate", value=st.session_state.use_inflation)
-        if st.session_state.use_inflation:
-            st.session_state.inflation_rate = st.number_input(
-                f"Expected Inflation Rate ({input_format})",
-                value=st.session_state.inflation_rate * (100 if input_format.startswith("Percentage") else 1),
-                step=0.01,
-                min_value=0.0
-            )
-            st.session_state.inflation_rate = st.session_state.inflation_rate / 100 if input_format.startswith("Percentage") else st.session_state.inflation_rate
+                st.session_state.inflation_rate = st.session_state.inflation_rate / 100 if input_format.startswith("Percentage") else st.session_state.inflation_rate
 
     st.write("### Optimization Settings")
     optimization_method = st.selectbox(
@@ -245,7 +268,7 @@ with st.form("asset_details"):
     risk_free_rate = risk_free_rate / 100 if input_format.startswith("Percentage") else risk_free_rate
     submitted = st.form_submit_button("Optimize Portfolio")
 
-# New feature: Ideal Metric Suggestions
+# Ideal Metric Suggestions
 st.write("### Ideal Asset Metrics Suggestion")
 with st.form("ideal_metrics"):
     ideal_num_assets = st.number_input("Number of assets for ideal suggestion", min_value=2, value=3, step=1)
@@ -253,18 +276,37 @@ with st.form("ideal_metrics"):
     optimize_returns = st.checkbox("Optimize Returns", value=True)
     optimize_vols = st.checkbox("Optimize Volatilities", value=True)
     optimize_corrs = st.checkbox("Optimize Correlations", value=True)
+    asset_classes = st.multiselect("Asset Classes (optional)", ["Stocks", "Bonds", "REITs", "Crypto", "Gold", "Commodities", "Real Estate"], default=["Stocks"] * ideal_num_assets)
     ideal_submitted = st.form_submit_button("Suggest Ideal Metrics")
 
 if ideal_submitted:
     suggestions = PortfolioOptimizer.suggest_ideal_metrics(
-        ideal_num_assets, time_horizon, risk_free_rate,
-        optimize_returns, optimize_vols, optimize_corrs,
-        st.session_state.use_dividends, st.session_state.use_taxes, st.session_state.use_inflation,
-        st.session_state.inflation_rate, st.session_state.use_transaction_costs, st.session_state.use_weight_constraints,
-        st.session_state.allow_short_selling
+        ideal_num_assets, time_horizon, risk_free_rate, optimize_returns, optimize_vols, optimize_corrs,
+        asset_classes=asset_classes,
+        use_dividends=st.session_state.use_dividends, use_taxes=st.session_state.use_taxes, use_inflation=st.session_state.use_inflation,
+        inflation_rate=st.session_state.inflation_rate, use_transaction_costs=st.session_state.use_transaction_costs,
+        use_weight_constraints=st.session_state.use_weight_constraints, allow_short_selling=st.session_state.allow_short_selling
     )
     st.write("### Suggested Ideal Metrics")
     st.table(pd.DataFrame(suggestions))
+
+# Caching optimization results
+@st.cache_data
+def run_optimization(returns, cov_matrix, risk_free_rate, transaction_costs, min_weights, max_weights,
+                    dividend_yields, tax_rates, inflation_rate, method, ga_iterations, monte_carlo_iterations):
+    optimizer = PortfolioOptimizer(
+        returns, cov_matrix, risk_free_rate, transaction_costs, min_weights, max_weights,
+        dividend_yields, tax_rates, inflation_rate,
+        st.session_state.use_transaction_costs, st.session_state.use_weight_constraints,
+        st.session_state.use_dividends, st.session_state.use_taxes, st.session_state.use_inflation,
+        st.session_state.allow_short_selling
+    )
+    if method == "Genetic Algorithm":
+        return optimizer.optimize_ga(ga_iterations)
+    elif method == "SLSQP":
+        return optimizer.optimize_slsqp()
+    else:
+        return optimizer.optimize_monte_carlo(monte_carlo_iterations)
 
 # Process optimization and display results
 if submitted:
@@ -287,27 +329,15 @@ if submitted:
     elif np.linalg.matrix_rank(cov_matrix) < len(returns):
         st.error("Covariance matrix is singular. Adjust correlations to ensure linear independence.")
     else:
-        optimizer = PortfolioOptimizer(
-            returns, cov_matrix, risk_free_rate, transaction_costs, min_weights, max_weights,
-            dividend_yields, tax_rates, inflation_rate,
-            st.session_state.use_transaction_costs, st.session_state.use_weight_constraints,
-            st.session_state.use_dividends, st.session_state.use_taxes, st.session_state.use_inflation,
-            st.session_state.allow_short_selling
-        )
         progress_bar = st.progress(0)
         results = {}
-
         methods = ["Genetic Algorithm", "SLSQP", "Monte Carlo"] if optimization_method == "Compare All" else [optimization_method]
         for method in methods:
             with st.spinner(f"Running {method}..."):
-                if method == "Genetic Algorithm":
-                    best_weights, best_sharpe, var, cvar = optimizer.optimize_ga(ga_iterations, progress_bar=progress_bar)
-                elif method == "SLSQP":
-                    best_weights, best_sharpe, var, cvar = optimizer.optimize_slsqp()
-                    progress_bar.progress(100)
-                else:  # Monte Carlo
-                    best_weights, best_sharpe, var, cvar = optimizer.optimize_monte_carlo(monte_carlo_iterations)
-                    progress_bar.progress(100)
+                best_weights, best_sharpe, var, cvar = run_optimization(
+                    returns, cov_matrix, risk_free_rate, transaction_costs, min_weights, max_weights,
+                    dividend_yields, tax_rates, inflation_rate, method, ga_iterations, monte_carlo_iterations
+                )
                 results[method] = {
                     'weights': best_weights,
                     'sharpe': best_sharpe,
@@ -318,9 +348,11 @@ if submitted:
                     'tax_impact': np.dot(best_weights, (returns + (dividend_yields if st.session_state.use_dividends else np.zeros_like(returns))) * tax_rates) if st.session_state.use_taxes else 0.0,
                     'cost_penalty': np.sum(np.abs(best_weights) * transaction_costs) if st.session_state.use_transaction_costs else 0.0
                 }
+                if method != "Genetic Algorithm":
+                    progress_bar.progress(100)
 
         # Display results in tabs
-        tabs = st.tabs(["Summary", "Weights", "Charts", "Settings", "Suggestions"])
+        tabs = st.tabs(["Summary", "Weights", "Charts", "Settings", "Suggestions", "Sensitivity Analysis"])
         with tabs[0]:  # Summary
             st.write("### Portfolio Summary")
             for method, result in results.items():
@@ -355,7 +387,11 @@ if submitted:
         with tabs[2]:  # Charts
             st.write("### Efficient Frontier with Capital Allocation Line")
             num_simulations = 1000
-            sim_weights = [optimizer._initialize_weights() for _ in range(num_simulations)]
+            sim_weights = [PortfolioOptimizer(returns, cov_matrix, risk_free_rate, transaction_costs, min_weights, max_weights,
+                                             dividend_yields, tax_rates, inflation_rate,
+                                             st.session_state.use_transaction_costs, st.session_state.use_weight_constraints,
+                                             st.session_state.use_dividends, st.session_state.use_taxes, st.session_state.use_inflation,
+                                             st.session_state.allow_short_selling)._initialize_weights() for _ in range(num_simulations)]
             sim_returns = [np.dot(w, returns + (dividend_yields if st.session_state.use_dividends else np.zeros_like(returns))) for w in sim_weights]
             sim_vols = [np.sqrt(np.dot(w.T, np.dot(cov_matrix, w))) for w in sim_weights]
             fig_frontier = go.Figure()
@@ -374,7 +410,6 @@ if submitted:
                     name=f"{method} Portfolio",
                     marker=dict(size=10)
                 ))
-                # Add CAL
                 cal_vols = np.linspace(0, max(sim_vols) * 100 * 1.5, 100)
                 cal_returns = [(risk_free_rate + (result['return'] - risk_free_rate) / (result['volatility'] * 100) * v) * 100 for v in cal_vols]
                 fig_frontier.add_trace(go.Scatter(
@@ -392,8 +427,6 @@ if submitted:
                 width=800
             )
             st.plotly_chart(fig_frontier, use_container_width=True)
-
-            # Download frontier plot
             buffer = io.BytesIO()
             fig_frontier.write_png(buffer)
             st.download_button(
@@ -425,6 +458,30 @@ if submitted:
                     mime="image/png"
                 )
 
+            st.write("### Wealth Projection Over Time")
+            time_horizon = st.number_input("Projection Time Horizon (years)", min_value=1, value=5, step=1)
+            fig_wealth = go.Figure()
+            for method, result in results.items():
+                adj_return = result['return'] - result['tax_impact'] - result['cost_penalty'] - (inflation_rate if st.session_state.use_inflation else 0.0)
+                years = np.arange(0, time_horizon + 1)
+                wealth = [1 * (1 + adj_return) ** y for y in years]
+                fig_wealth.add_trace(go.Scatter(x=years, y=wealth, mode='lines', name=f"{method} Wealth"))
+            fig_wealth.update_layout(
+                title='Projected Portfolio Value ($1 Initial Investment)',
+                xaxis_title='Years',
+                yaxis_title='Portfolio Value ($)',
+                template='plotly_dark' if st.get_option("theme.base") == "dark" else 'plotly'
+            )
+            st.plotly_chart(fig_wealth, use_container_width=True)
+            buffer = io.BytesIO()
+            fig_wealth.write_png(buffer)
+            st.download_button(
+                label="Download Wealth Projection as PNG",
+                data=buffer,
+                file_name="wealth_projection.png",
+                mime="image/png"
+            )
+
         with tabs[3]:  # Settings
             st.write("### Input Settings")
             settings_data = {
@@ -442,24 +499,34 @@ if submitted:
         with tabs[4]:  # Suggestions
             st.write("### Portfolio Improvement Suggestions")
             if results:
-                # Use the best method's results (or average if comparing all)
                 primary_method = list(results.keys())[0] if optimization_method != "Compare All" else "Genetic Algorithm"
                 best_weights = results[primary_method]['weights']
                 asset_names = st.session_state.asset_names
-                # Compute effective diversification (inverse Herfindahl index)
                 effective_diversification = 1 / np.sum(best_weights ** 2)
-                avg_corr = (np.sum(correlations) - num_assets) / (num_assets * (num_assets - 1)) if num_assets > 1 else 0  # Average off-diagonal correlation
+                avg_corr = (np.sum(correlations) - num_assets) / (num_assets * (num_assets - 1)) if num_assets > 1 else 0
                 
                 st.write(f"Current effective diversification: {effective_diversification:.2f} (out of {num_assets} assets)")
                 st.write(f"Average correlation between assets: {avg_corr:.2f}")
                 
                 if effective_diversification < num_assets / 2 or avg_corr > 0.7:
-                    st.warning("Portfolio may benefit from more diversification. Consider adding 1-2 assets with low correlations (e.g., <0.3) to existing ones, like bonds if you have mostly stocks.")
+                    st.warning("Portfolio may benefit from more diversification. Consider adding 1-2 assets with low correlations (e.g., <0.3) to existing ones, like Gold or Bonds if you have mostly Stocks.")
                     st.info("Suggestion: Add an asset with return ~0.05, volatility ~0.10, and correlations <0.2 to all current assets.")
                 else:
                     st.success("Portfolio appears well-diversified.")
                 
-                # Suggest removal: Simulate removing each asset and re-optimize (using fast Monte Carlo for speed)
+                st.write("#### Risk Contribution Analysis")
+                risk_contributions = []
+                portfolio_vol = results[primary_method]['volatility']
+                for i in range(num_assets):
+                    marginal_contrib = np.dot(cov_matrix[i], best_weights) / portfolio_vol
+                    risk_contrib = best_weights[i] * marginal_contrib / portfolio_vol
+                    risk_contributions.append(risk_contrib * 100)
+                contrib_data = {"Asset": asset_names, "Risk Contribution (%)": risk_contributions}
+                st.table(pd.DataFrame(contrib_data))
+                high_risk_asset = asset_names[np.argmax(risk_contributions)]
+                if max(risk_contributions) > 100 / num_assets * 1.5:
+                    st.warning(f"{high_risk_asset} contributes {max(risk_contributions):.2f}% to portfolio risk, more than its fair share ({100/num_assets:.2f}%). Consider replacing with a less volatile or less correlated asset.")
+                
                 st.write("#### Asset Removal Suggestions")
                 removal_improvements = {}
                 for i in range(num_assets):
@@ -481,11 +548,10 @@ if submitted:
                             st.session_state.use_dividends, st.session_state.use_taxes, st.session_state.use_inflation,
                             st.session_state.allow_short_selling
                         )
-                        _, temp_sharpe, _, _ = temp_optimizer.optimize_monte_carlo(1000)  # Fast sim
+                        _, temp_sharpe, _, _ = temp_optimizer.optimize_monte_carlo(1000)
                         improvement = (temp_sharpe - results[primary_method]['sharpe']) / results[primary_method]['sharpe'] * 100 if results[primary_method]['sharpe'] != 0 else 0
                         removal_improvements[asset_names[i]] = improvement
                 
-                # Display suggestions
                 if removal_improvements:
                     best_removal = max(removal_improvements, key=removal_improvements.get)
                     if removal_improvements[best_removal] > 5:
@@ -493,6 +559,36 @@ if submitted:
                     else:
                         st.success("No significant improvement from removing any single asset.")
                     st.table(pd.DataFrame({"Asset": list(removal_improvements.keys()), "Sharpe Improvement (%)": list(removal_improvements.values())}))
+
+        with tabs[5]:  # Sensitivity Analysis
+            st.write("### Sensitivity Analysis")
+            sensitivity_data = []
+            for i in range(num_assets):
+                for factor, label in [(1.1, "+10%"), (0.9, "-10%")]:
+                    for metric, metric_label in [("returns", "Return"), ("volatilities", "Volatility")]:
+                        temp_returns = returns.copy()
+                        temp_volatilities = volatilities.copy()
+                        if metric == "returns":
+                            temp_returns[i] *= factor
+                        else:
+                            temp_volatilities[i] *= factor
+                        temp_cov = np.outer(temp_volatilities, temp_volatilities) * correlations
+                        temp_optimizer = PortfolioOptimizer(
+                            temp_returns, temp_cov, risk_free_rate, transaction_costs, min_weights, max_weights,
+                            dividend_yields, tax_rates, inflation_rate,
+                            st.session_state.use_transaction_costs, st.session_state.use_weight_constraints,
+                            st.session_state.use_dividends, st.session_state.use_taxes, st.session_state.use_inflation,
+                            st.session_state.allow_short_selling
+                        )
+                        _, temp_sharpe, _, _ = temp_optimizer.optimize_monte_carlo(1000)
+                        sensitivity_data.append({
+                            "Asset": asset_names[i],
+                            "Metric": metric_label,
+                            "Change": label,
+                            "Sharpe Ratio": temp_sharpe,
+                            "Sharpe Change (%)": (temp_sharpe - results[primary_method]['sharpe']) / results[primary_method]['sharpe'] * 100 if results[primary_method]['sharpe'] != 0 else 0
+                        })
+            st.table(pd.DataFrame(sensitivity_data))
 
         # Export results as CSV
         for method, result in results.items():
@@ -525,4 +621,15 @@ if submitted:
                 data=csv,
                 file_name=f"portfolio_results_{method.lower().replace(' ', '_')}.csv",
                 mime="text/csv"
+            )
+
+        # PDF Export
+        st.write("### Export Report as PDF")
+        if st.button("Generate PDF Report"):
+            pdf_buffer = generate_pdf_report(results, st.session_state.use_transaction_costs, st.session_state.use_taxes, st.session_state.use_inflation, inflation_rate)
+            st.download_button(
+                label="Download PDF Report",
+                data=pdf_buffer,
+                file_name="portfolio_report.pdf",
+                mime="application/pdf"
             )
