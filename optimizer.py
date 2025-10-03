@@ -7,7 +7,7 @@ class PortfolioOptimizer:
     """Class to optimize portfolio weights using multiple methods to maximize Sharpe Ratio."""
     def __init__(self, returns, cov_matrix, risk_free_rate, transaction_costs, min_weights, max_weights, 
                  dividend_yields, tax_rates, inflation_rate, use_transaction_costs, use_weight_constraints, 
-                 use_dividends, use_taxes, use_inflation, allow_short_selling, pop_size=100):
+                 use_dividends, use_taxes, use_inflation, allow_short_selling, pop_size=50):
         """Initialize optimizer with financial parameters and configuration flags."""
         self.returns = returns
         self.cov_matrix = cov_matrix
@@ -56,7 +56,6 @@ class PortfolioOptimizer:
 
     def select(self, fitnesses):
         """Tournament selection: pick best from random subsets."""
-        selected PLEASE SELECT ALL THAT APPLY
         selected = []
         for _ in range(self.pop_size):
             tournament_indices = np.random.choice(self.pop_size, size=5, replace=False)
@@ -81,10 +80,10 @@ class PortfolioOptimizer:
                 self.population[i] = np.clip(self.population[i], self.min_weights, self.max_weights)
                 self.population[i] /= self.population[i].sum() or 1.0
 
-    def optimize_ga(self, generations=200, progress_bar=None):
+    def optimize_ga(self, generations=100, progress_bar=None):
         """Run genetic algorithm with early stopping and parallel fitness evaluation."""
         for gen in range(generations):
-            fitnesses = Parallel(n_jobs=-1)(delayed(self.fitness)(w) for w in self.population)
+            fitnesses = Parallel(n_jobs=2)(delayed(self.fitness)(w) for w in self.population)
             current_best = max(fitnesses)
             if current_best > self.best_sharpe:
                 self.best_sharpe = current_best
@@ -113,10 +112,10 @@ class PortfolioOptimizer:
         var, cvar = self.calculate_var_cvar(result.x)
         return result.x, -result.fun, var, cvar
 
-    def optimize_monte_carlo(self, num_simulations=10000):
+    def optimize_monte_carlo(self, num_simulations=5000):
         """Optimize using Monte Carlo simulation with parallel evaluation."""
         weights_list = [self._initialize_weights() for _ in range(num_simulations)]
-        fitnesses = Parallel(n_jobs=-1)(delayed(self.fitness)(w) for w in weights_list)
+        fitnesses = Parallel(n_jobs=2)(delayed(self.fitness)(w) for w in weights_list)
         best_idx = np.argmax(fitnesses)
         best_weights = weights_list[best_idx]
         best_sharpe = fitnesses[best_idx]
@@ -145,8 +144,8 @@ class PortfolioOptimizer:
         vol_highs = [class_ranges[ac]["vol"][1] if optimize_vols else 0.25 for ac in asset_classes]
         corr_low, corr_high = (-0.3, 0.8) if optimize_corrs else (0.0, 0.3)
         
-        pop_size = 50
-        generations = 50
+        pop_size = 20
+        generations = 20
         dim = num_assets
         corr_size = dim * (dim - 1) // 2
         
@@ -170,7 +169,7 @@ class PortfolioOptimizer:
             opt = cls(rets, cov, risk_free_rate, transaction_costs, min_weights, max_weights,
                       dividend_yields, tax_rates, inflation_rate, use_transaction_costs, use_weight_constraints,
                       use_dividends, use_taxes, use_inflation, allow_short_selling)
-            _, sharpe, _, _ = opt.optimize_ga(generations=50)
+            _, sharpe, _, _ = opt.optimize_ga(generations=20)
             adj_return = sharpe * np.sqrt(np.dot(opt.best_weights.T, np.dot(cov, opt.best_weights))) + (risk_free_rate - inflation_rate)
             wealth = (1 + adj_return) ** time_horizon
             return wealth
@@ -180,7 +179,7 @@ class PortfolioOptimizer:
         best_metrics = None
         
         for gen in range(generations):
-            fitnesses = Parallel(n_jobs=-1)(delayed(metrics_fitness)(*ind) for ind in population)
+            fitnesses = Parallel(n_jobs=2)(delayed(metrics_fitness)(*ind) for ind in population)
             best_idx = np.argmax(fitnesses)
             if fitnesses[best_idx] > best_wealth:
                 best_wealth = fitnesses[best_idx]
