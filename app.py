@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+import json
 
 # Set page config for better appearance
 st.set_page_config(page_title="Portfolio Optimizer", layout="wide")
@@ -16,7 +17,20 @@ if 'asset_names' not in st.session_state:
 
 # Title and description
 st.title("Portfolio Optimizer")
-st.markdown("Optimize your investment portfolio using Monte Carlo, Genetic Algorithm, or Gradient Descent methods. Enter asset details and metrics below.")
+st.markdown("Optimize your investment portfolio using various methods. Enter asset details and metrics below.")
+st.warning("This is for educational purposes only. Not financial advice. Consult a professional for real investments.")
+
+# Save/Load inputs
+col1, col2 = st.columns(2)
+with col1:
+    st.download_button("Save Inputs", data=json.dumps(st.session_state), file_name="portfolio_inputs.json")
+with col2:
+    uploaded_file = st.file_uploader("Load Inputs", type="json")
+    if uploaded_file:
+        data = json.load(uploaded_file)
+        for k, v in data.items():
+            st.session_state[k] = v
+        st.rerun()
 
 # Reset button
 if st.button("Reset All Inputs"):
@@ -25,7 +39,7 @@ if st.button("Reset All Inputs"):
     st.session_state.asset_names = ["Asset 1", "Asset 2"]
     st.rerun()
 
-# Step 1: Number of assets
+# Step 1: Asset Configuration
 with st.expander("Asset Configuration", expanded=True):
     num_assets = st.number_input(
         "Enter number of assets",
@@ -56,45 +70,60 @@ with st.expander("Asset Configuration", expanded=True):
 
 # Step 2: Optimization method
 with st.expander("Optimization Method", expanded=True):
-    methods = ["Monte Carlo", "Genetic Algorithm", "Gradient Descent (Mean-Variance)"]
+    methods = ["Monte Carlo", "Genetic Algorithm", "Gradient Descent (Mean-Variance)", "SciPy (Constrained)"]
     method = st.selectbox(
         "Select optimization method",
         methods,
         help="Choose the algorithm to optimize your portfolio."
     )
 
+# Constraints
+with st.expander("Constraints", expanded=False):
+    use_constraints = st.checkbox("Use weight constraints", value=False)
+    if use_constraints:
+        min_weight = st.number_input("Minimum weight per asset", min_value=0.0, max_value=0.5, value=0.0)
+        max_weight = st.number_input("Maximum weight per asset", min_value=0.0, max_value=1.0, value=1.0)
+    else:
+        min_weight = max_weight = None
+
 # Step 3: Metrics configuration
 with st.expander("Metrics Configuration", expanded=True):
     st.write("Enable/disable metrics and provide values for global and per-asset parameters.")
 
     # Global metrics
-    use_inflation = st.checkbox("Use Inflation", value=True, help="Include inflation adjustment in metrics.")
+    use_inflation = st.checkbox("Use Inflation", value=True)
     inflation = st.number_input(
-        "Inflation rate (decimal, e.g., 0.03 for 3%)",
+        "Inflation rate (decimal)",
         value=0.03,
         min_value=0.0,
-        max_value=0.5,
-        help="Annual inflation rate as a decimal."
+        max_value=0.5
     ) if use_inflation else 0.0
 
-    use_tax_rate = st.checkbox("Use Tax Rate", value=True, help="Include tax rate in metrics.")
+    use_tax_rate = st.checkbox("Use Tax Rate", value=True)
 
-    use_sharpe = st.checkbox(
-        "Include Sharpe Ratio in Results",
-        value=True,
-        help="Calculate the Sharpe Ratio to evaluate risk-adjusted return (requires risk-free rate)."
-    )
+    use_sharpe = st.checkbox("Include Sharpe Ratio", value=True)
     if use_sharpe:
-        st.markdown("**Risk-Free Rate**: Enter the return of a risk-free investment (e.g., Treasury bill yield) used to calculate the Sharpe Ratio.")
         risk_free_rate = st.number_input(
             "Risk-free rate (decimal)",
             value=0.02,
             min_value=0.0,
-            max_value=0.5,
-            help="Risk-free rate as a decimal (e.g., 0.02 for 2%). Used in Sharpe Ratio = (Portfolio Return - Risk-Free Rate) / Portfolio Volatility."
+            max_value=0.5
         )
     else:
         risk_free_rate = 0.0
+
+    use_advanced_metrics = st.checkbox("Include Advanced Metrics (VaR, Sortino)", value=False)
+
+    use_stochastic = st.checkbox("Stochastic Mode", value=False, help="Simulate scenarios with random inputs.")
+    if use_stochastic:
+        num_simulations = st.number_input("Number of simulations", min_value=100, max_value=10000, value=1000)
+        std_factor = st.number_input("Uncertainty factor for std (e.g., 0.2 means std = 0.2 * mean)", value=0.2, min_value=0.0, max_value=1.0)
+
+    use_multiperiod = st.checkbox("Multi-Period Mode", value=False, help="Simulate over time horizon with rebalancing.")
+    if use_multiperiod:
+        horizon = st.number_input("Investment horizon (years)", min_value=1, max_value=50, value=5)
+        rebalance_freq = st.selectbox("Rebalance frequency", ["Annual", "Quarterly", "Monthly"], index=0)
+        num_mp_sim = st.number_input("Number of multi-period simulations", min_value=100, max_value=5000, value=1000)
 
 # Per asset metrics
 with st.expander("Per Asset Metrics", expanded=True):
@@ -112,45 +141,41 @@ with st.expander("Per Asset Metrics", expanded=True):
                 value=0.10,
                 min_value=-1.0,
                 max_value=1.0,
-                key=f"ret_{i}",
-                help=f"Expected annual return for {asset} as a decimal."
+                key=f"ret_{i}"
             )
             vol = st.number_input(
                 f"Volatility (decimal)",
                 value=0.15,
                 min_value=0.01,
                 max_value=1.0,
-                key=f"vol_{i}",
-                help=f"Annual volatility for {asset} as a decimal."
+                key=f"vol_{i}"
             )
             div_yield = st.number_input(
                 f"Dividend yield (decimal)",
                 value=0.02,
                 min_value=0.0,
                 max_value=0.5,
-                key=f"div_{i}",
-                help=f"Dividend yield for {asset} as a decimal."
+                key=f"div_{i}"
             )
             tax_rate = st.number_input(
-                f"Tax rate (decimal, e.g., 0.20 for 20%)",
+                f"Tax rate (decimal)",
                 value=0.20,
                 min_value=0.0,
                 max_value=1.0,
-                key=f"tax_{i}",
-                help=f"Tax rate for {asset} as a decimal."
+                key=f"tax_{i}"
             ) if use_tax_rate else 0.0
             expected_returns.append(exp_ret)
             volatilities.append(vol)
             dividend_yields.append(div_yield)
             tax_rates.append(tax_rate)
 
-# Pairwise correlations
+# Correlation Matrix
 with st.expander("Correlation Matrix", expanded=False):
-    use_correlations = st.checkbox("Use Correlations", value=True, help="Include asset correlations in optimization.")
+    use_correlations = st.checkbox("Use Correlations", value=True)
     correlations = np.eye(num_assets)
     if use_correlations:
         st.subheader("Correlation Matrix")
-        default_corr = st.checkbox("Use default correlation (0.2 for all pairs)", value=False, help="Set all pairwise correlations to 0.2.")
+        default_corr = st.checkbox("Use default correlation (0.2 for all pairs)", value=False)
         if default_corr:
             correlations = np.ones((num_assets, num_assets)) * 0.2
             np.fill_diagonal(correlations, 1.0)
@@ -165,8 +190,7 @@ with st.expander("Correlation Matrix", expanded=False):
                             value=0.0,
                             min_value=-1.0,
                             max_value=1.0,
-                            key=f"corr_{i}_{j}",
-                            help=f"Correlation coefficient between {asset_names[i]} and {asset_names[j]}."
+                            key=f"corr_{i}_{j}"
                         )
                         corr_df.iloc[i, j] = corr
                         corr_df.iloc[j, i] = corr
@@ -176,12 +200,11 @@ with st.expander("Correlation Matrix", expanded=False):
 with st.expander("Input Format", expanded=True):
     input_format = st.radio(
         "Input numbers as:",
-        ("Decimal (e.g., 0.05)", "Percentage (e.g., 5)"),
-        help="Choose whether inputs are in decimal (e.g., 0.05 for 5%) or percentage (e.g., 5 for 5%)."
+        ("Decimal (e.g., 0.05)", "Percentage (e.g., 5)")
     )
     scale = 0.01 if input_format == "Percentage (e.g., 5)" else 1.0
 
-# Apply scale if needed
+# Apply scale
 if scale == 0.01:
     expected_returns = [r * scale for r in expected_returns]
     volatilities = [v * scale for v in volatilities]
@@ -195,8 +218,7 @@ iterations = st.number_input(
     "Number of iterations for optimization",
     min_value=100,
     max_value=5000,
-    value=1000,
-    help="Number of iterations for the optimization algorithm (higher values increase computation time)."
+    value=1000
 )
 
 # Cache plot functions
@@ -219,7 +241,7 @@ def plot_heatmap(correlations, asset_names):
 def plot_efficient_frontier(portfolio_returns, portfolio_vols, opt_return, opt_vol, asset_names):
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.scatter(portfolio_vols, portfolio_returns, c='blue', alpha=0.3, s=10, label='Random Portfolios')
-    ax.scatter(opt_vol, opt_return, c='red', marker='*', s=300, label='Optimized Portfolio', edgecolors='black', linewidth=1.5)
+    ax.scatter(opt_vol, opt_return, c='red', marker='*', s=300, label='Optimized Portfolio')
     ax.set_xlabel("Volatility (Risk)")
     ax.set_ylabel("Expected Return")
     ax.set_title("Efficient Frontier")
@@ -227,8 +249,17 @@ def plot_efficient_frontier(portfolio_returns, portfolio_vols, opt_return, opt_v
     ax.grid(True, alpha=0.3)
     return fig
 
+@st.cache_data
+def plot_histogram(data, title):
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.hist(data, bins=30, color='blue', alpha=0.7)
+    ax.set_title(title)
+    ax.set_xlabel("Value")
+    ax.set_ylabel("Frequency")
+    return fig
+
 # Optimize button
-if st.button("Optimize Portfolio", help="Run the portfolio optimization with the specified parameters."):
+if st.button("Optimize Portfolio"):
     progress_bar = st.progress(0)
     with st.spinner("Optimizing..."):
         try:
@@ -244,59 +275,101 @@ if st.button("Optimize Portfolio", help="Run the portfolio optimization with the
                 iterations=iterations,
                 use_sharpe=use_sharpe,
                 use_inflation=use_inflation,
-                use_tax_rate=use_tax_rate
+                use_tax_rate=use_tax_rate,
+                use_advanced_metrics=use_advanced_metrics,
+                min_weight=min_weight if use_constraints else None,
+                max_weight=max_weight if use_constraints else None
             )
+            progress_bar.progress(0.5)
+
+            if use_stochastic:
+                from stochastic import simulate_scenarios
+                return_stds = np.array(expected_returns) * std_factor
+                vol_stds = np.array(volatilities) * std_factor
+                div_stds = np.array(dividend_yields) * std_factor
+                stochastic_metrics = simulate_scenarios(
+                    weights, np.array(expected_returns), return_stds, np.array(volatilities), vol_stds, correlations,
+                    np.array(dividend_yields), div_stds, inflation, np.array(tax_rates), risk_free_rate,
+                    use_sharpe, use_inflation, use_tax_rate, use_advanced_metrics, num_simulations
+                )
+                metrics.update(stochastic_metrics)
+
+            if use_multiperiod:
+                from multiperiod import multiperiod_simulation
+                mp_metrics = multiperiod_simulation(
+                    weights, np.array(expected_returns), np.array(volatilities), correlations,
+                    horizon, rebalance_freq, num_mp_sim
+                )
+                metrics.update(mp_metrics)
+
             progress_bar.progress(1.0)
         except ValueError as ve:
             st.error(f"Input error: {str(ve)}")
             st.stop()
         except np.linalg.LinAlgError:
-            st.error("Numerical error: Invalid correlation matrix or singular covariance matrix.")
+            st.error("Numerical error: Invalid correlation matrix.")
             st.stop()
         except Exception as e:
             st.error(f"Unexpected error: {str(e)}")
             st.stop()
-    
+
     st.success("Optimization Complete!")
-    
+
     # Display weights
     with st.expander("Optimized Portfolio Allocation", expanded=True):
         weights_df = pd.DataFrame({"Asset": asset_names, "Weight (%)": [w * 100 for w in weights]})
         st.table(weights_df)
-    
-        # Pie chart
+
         fig_pie = plot_pie(weights, asset_names)
         st.pyplot(fig_pie)
         plt.close(fig_pie)
-    
+
     # Metrics display
     with st.expander("Portfolio Metrics", expanded=True):
-        metrics_df = pd.DataFrame(list(metrics.items()), columns=['Metric', 'Value'])
-        metrics_df['Value'] = metrics_df['Value'].apply(lambda x: f"{x:.4f}")
-        st.table(metrics_df)
-    
-    # Correlation heatmap if used
+        if not use_stochastic:
+            metrics_df = pd.DataFrame(list(metrics.items()), columns=['Metric', 'Value'])
+            metrics_df['Value'] = metrics_df['Value'].apply(lambda x: f"{x:.4f}")
+            st.table(metrics_df)
+        else:
+            # Display stochastic as table with percentiles
+            sto_df = pd.DataFrame(metrics).T  # rows metrics, columns mean p5 p50 p95
+            st.table(sto_df)
+
+    # Correlation heatmap
     if use_correlations:
         with st.expander("Correlation Heatmap", expanded=False):
             fig_corr = plot_heatmap(correlations, asset_names)
             st.pyplot(fig_corr)
             plt.close(fig_corr)
-    
-    # Efficient frontier simulation
+
+    # Efficient frontier
     if method in ["Monte Carlo", "Genetic Algorithm"]:
         with st.expander("Efficient Frontier Simulation", expanded=False):
             portfolio_returns = []
             portfolio_vols = []
             cov_matrix = np.diag(volatilities) @ correlations @ np.diag(volatilities)
-            
+
             for i in range(500):
                 rand_weights = np.random.dirichlet(np.ones(num_assets))
                 port_ret = np.dot(rand_weights, expected_returns)
                 port_vol = np.sqrt(np.dot(rand_weights.T, np.dot(cov_matrix, rand_weights)))
                 portfolio_returns.append(port_ret)
                 portfolio_vols.append(port_vol)
-                progress_bar.progress((i + 1) / 500)
-            
-            fig_ef = plot_efficient_frontier(portfolio_returns, portfolio_vols, metrics['Portfolio Return'], metrics['Portfolio Volatility'], asset_names)
+
+            fig_ef = plot_efficient_frontier(portfolio_returns, portfolio_vols, metrics.get('Portfolio Return', 0), metrics.get('Portfolio Volatility', 0), asset_names)
             st.pyplot(fig_ef)
             plt.close(fig_ef)
+
+    # Stochastic histograms if enabled
+    if use_stochastic:
+        with st.expander("Stochastic Distributions", expanded=False):
+            fig_ret = plot_histogram(metrics['Portfolio Return']['samples'], "Distribution of Portfolio Returns")
+            st.pyplot(fig_ret)
+            plt.close(fig_ret)
+
+    # Multiperiod if enabled
+    if use_multiperiod:
+        with st.expander("Multi-Period Simulation", expanded=False):
+            fig_wealth = plot_histogram(metrics['Final Wealth']['samples'], "Distribution of Final Portfolio Wealth")
+            st.pyplot(fig_wealth)
+            plt.close(fig_wealth)
