@@ -78,13 +78,6 @@ with st.expander("Metrics Configuration", expanded=True):
     ) if use_inflation else 0.0
 
     use_tax_rate = st.checkbox("Use Tax Rate", value=True, help="Include tax rate in metrics.")
-    tax_rate = st.number_input(
-        "Tax rate (decimal, e.g., 0.20 for 20%)",
-        value=0.20,
-        min_value=0.0,
-        max_value=1.0,
-        help="Tax rate as a decimal."
-    ) if use_tax_rate else 0.0
 
     use_sharpe = st.checkbox(
         "Include Sharpe Ratio in Results",
@@ -109,6 +102,7 @@ with st.expander("Per Asset Metrics", expanded=True):
     expected_returns = []
     volatilities = []
     dividend_yields = []
+    tax_rates = []
     cols = st.columns(2)
     for i, asset in enumerate(asset_names):
         with cols[i % 2]:
@@ -137,9 +131,18 @@ with st.expander("Per Asset Metrics", expanded=True):
                 key=f"div_{i}",
                 help=f"Dividend yield for {asset} as a decimal."
             )
+            tax_rate = st.number_input(
+                f"Tax rate (decimal, e.g., 0.20 for 20%)",
+                value=0.20,
+                min_value=0.0,
+                max_value=1.0,
+                key=f"tax_{i}",
+                help=f"Tax rate for {asset} as a decimal."
+            ) if use_tax_rate else 0.0
             expected_returns.append(exp_ret)
             volatilities.append(vol)
             dividend_yields.append(div_yield)
+            tax_rates.append(tax_rate)
 
 # Pairwise correlations
 with st.expander("Correlation Matrix", expanded=False):
@@ -183,8 +186,8 @@ if scale == 0.01:
     expected_returns = [r * scale for r in expected_returns]
     volatilities = [v * scale for v in volatilities]
     dividend_yields = [d * scale for d in dividend_yields]
+    tax_rates = [t * scale for t in tax_rates]
     inflation *= scale
-    tax_rate *= scale
     risk_free_rate *= scale
 
 # Number of iterations
@@ -236,7 +239,7 @@ if st.button("Optimize Portfolio", help="Run the portfolio optimization with the
                 correlations=correlations,
                 dividend_yields=np.array(dividend_yields),
                 inflation=inflation,
-                tax_rate=tax_rate,
+                tax_rate=np.array(tax_rates),
                 risk_free_rate=risk_free_rate,
                 iterations=iterations,
                 use_sharpe=use_sharpe,
