@@ -27,7 +27,7 @@ st.warning("This is for educational purposes only. Not financial advice. Consult
 col1, col2 = st.columns(2)
 with col1:
     # Filter session state to include only serializable keys
-    serializable_state = {k: v for k, v in st.session_state.items() if k.startswith(('num_assets', 'asset_names', 'ret_', 'vol_', 'div_', 'tax_', 'corr_', 'price_', 'strike_', 'ttm_', 'ivol_', 'opt_type_'))}
+    serializable_state = {k: v for k, v in st.session_state.items() if k.startswith(('num_assets', 'asset_names', 'ret_', 'vol_', 'div_', 'tax_', 'corr_', 'price_', 'strike_', 'ttm_', 'ivol_', 'opt_type_')) or k == 'use_options_greeks'}
     st.download_button("Save Inputs", data=json.dumps(serializable_state), file_name="portfolio_inputs.json")
 with col2:
     uploaded_file = st.file_uploader("Load Inputs", type="json")
@@ -35,7 +35,7 @@ with col2:
         try:
             data = json.load(uploaded_file)
             # Only update valid keys to avoid injecting unexpected data
-            valid_keys = set(st.session_state.keys()) | set(['num_assets', 'asset_names'] + [f'ret_{i}' for i in range(10)] + [f'vol_{i}' for i in range(10)] + [f'div_{i}' for i in range(10)] + [f'tax_{i}' for i in range(10)] + [f'corr_{i}_{j}' for i in range(10) for j in range(i+1, 10)] + [f'price_{i}' for i in range(10)] + [f'strike_{i}' for i in range(10)] + [f'ttm_{i}' for i in range(10)] + [f'ivol_{i}' for i in range(10)] + [f'opt_type_{i}' for i in range(10)])
+            valid_keys = set(st.session_state.keys()) | set(['num_assets', 'asset_names', 'use_options_greeks'] + [f'ret_{i}' for i in range(10)] + [f'vol_{i}' for i in range(10)] + [f'div_{i}' for i in range(10)] + [f'tax_{i}' for i in range(10)] + [f'corr_{i}_{j}' for i in range(10) for j in range(i+1, 10)] + [f'price_{i}' for i in range(10)] + [f'strike_{i}' for i in range(10)] + [f'ttm_{i}' for i in range(10)] + [f'ivol_{i}' for i in range(10)] + [f'opt_type_{i}' for i in range(10)])
             for k, v in data.items():
                 if k in valid_keys:
                     st.session_state[k] = v
@@ -125,6 +125,8 @@ with st.expander("Metrics Configuration", expanded=True):
 
     use_advanced_metrics = st.checkbox("Include Advanced Metrics (VaR, Sortino)", value=False)
 
+    use_options_greeks = st.checkbox("Use Options Greeks", value=False, key="use_options_greeks", help="Calculate Greeks for options on each asset.")
+
     use_stochastic = st.checkbox("Stochastic Mode", value=False, help="Simulate scenarios with random inputs.")
     if use_stochastic:
         num_simulations = st.number_input("Number of simulations", min_value=100, max_value=10000, value=1000)
@@ -180,7 +182,6 @@ with st.expander("Per Asset Metrics", expanded=True):
                 max_value=1.0,
                 key=f"tax_{i}"
             ) if use_tax_rate else 0.0
-            use_options_greeks = st.checkbox("Use Options Greeks", value=False, help="Calculate Greeks for options on each asset.")
             if use_options_greeks:
                 asset_price = st.number_input(
                     f"Current asset price",
