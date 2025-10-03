@@ -1,5 +1,0 @@
-gfortran
-libblas-dev
-liblapack-dev
-libopenblas-dev
-build-essential
