@@ -214,8 +214,11 @@ with st.expander("Per Asset Metrics", expanded=True):
                     key=f"opt_type_{i}"
                 )
             else:
-                asset_price = strike_price = time_to_maturity = implied_vol = None
-                option_type = "call"
+                asset_price = None
+                strike_price = None
+                time_to_maturity = None
+                implied_vol = None
+                option_type = None
             expected_returns.append(exp_ret)
             volatilities.append(vol)
             dividend_yields.append(div_yield)
@@ -227,20 +230,17 @@ with st.expander("Per Asset Metrics", expanded=True):
             option_types.append(option_type)
 
 # Correlation matrix
-with st.expander("Correlation Matrix", expanded=True):
-    use_correlations = st.checkbox("Use custom correlations", value=True)
-    default_corr = st.checkbox("Use default correlation (0.2 for all pairs)", value=False)
-    if default_corr or not use_correlations:
-        correlations = np.ones((num_assets, num_assets)) * 0.2
-        np.fill_diagonal(correlations, 1.0)
-    else:
-        corr_df = pd.DataFrame(np.eye(num_assets), index=asset_names, columns=asset_names)
-        cols = st.columns(2)
-        for i in range(num_assets):
-            for j in range(i+1, num_assets):
-                with cols[(i+j) % 2]:
+use_correlations = st.checkbox("Use custom correlation matrix", value=True)
+if use_correlations:
+    with st.expander("Correlation Matrix", expanded=True):
+        st.subheader("Correlation Matrix")
+        corr_df = pd.DataFrame(np.eye(len(asset_names)), index=asset_names, columns=asset_names)
+        cols = st.columns(3)
+        for i in range(len(asset_names)):
+            for j in range(i + 1, len(asset_names)):
+                with cols[(i + j) % 3]:
                     corr = st.number_input(
-                        f"Correlation: {asset_names[i]} - {asset_names[j]}",
+                        f"Corr({asset_names[i]}, {asset_names[j]})",
                         value=0.0,
                         min_value=-1.0,
                         max_value=1.0,
@@ -249,6 +249,8 @@ with st.expander("Correlation Matrix", expanded=True):
                     corr_df.iloc[i, j] = corr
                     corr_df.iloc[j, i] = corr
         correlations = corr_df.values
+else:
+    correlations = np.eye(len(asset_names))
 
 # Input format
 with st.expander("Input Format", expanded=True):
@@ -419,22 +421,21 @@ if st.button("Optimize Portfolio"):
             plt.close(fig_corr)
 
     # Efficient frontier
-    if method in ["Monte Carlo", "Genetic Algorithm"]:
-        with st.expander("Efficient Frontier Simulation", expanded=False):
-            portfolio_returns = []
-            portfolio_vols = []
-            cov_matrix = np.diag(volatilities) @ correlations @ np.diag(volatilities)
+    with st.expander("Efficient Frontier Simulation", expanded=False):
+        portfolio_returns = []
+        portfolio_vols = []
+        cov_matrix = np.diag(volatilities) @ correlations @ np.diag(volatilities)
 
-            for i in range(500):
-                rand_weights = np.random.dirichlet(np.ones(num_assets))
-                port_ret = np.dot(rand_weights, expected_returns)
-                port_vol = np.sqrt(np.dot(rand_weights.T, np.dot(cov_matrix, rand_weights)))
-                portfolio_returns.append(port_ret)
-                portfolio_vols.append(port_vol)
+        for i in range(500):
+            rand_weights = np.random.dirichlet(np.ones(num_assets))
+            port_ret = np.dot(rand_weights, expected_returns)
+            port_vol = np.sqrt(np.dot(rand_weights.T, np.dot(cov_matrix, rand_weights)))
+            portfolio_returns.append(port_ret)
+            portfolio_vols.append(port_vol)
 
-            fig_ef = plot_efficient_frontier(portfolio_returns, portfolio_vols, normalized_metrics.get('Portfolio Return', {}).get('mean', 0), normalized_metrics.get('Portfolio Volatility', {}).get('mean', 0), asset_names)
-            st.pyplot(fig_ef)
-            plt.close(fig_ef)
+        fig_ef = plot_efficient_frontier(portfolio_returns, portfolio_vols, normalized_metrics.get('Portfolio Return', {}).get('mean', 0), normalized_metrics.get('Portfolio Volatility', {}).get('mean', 0), asset_names)
+        st.pyplot(fig_ef)
+        plt.close(fig_ef)
 
     # Stochastic histograms if enabled
     if use_stochastic:
