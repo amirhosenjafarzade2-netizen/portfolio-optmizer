@@ -33,6 +33,14 @@ def optimize_portfolio(method, expected_returns, volatilities, correlations, div
     else:
         raise ValueError("Unknown method")
     
+    # Enforce non-negative weights
+    weights = np.maximum(weights, 0)
+    sum_w = np.sum(weights)
+    if sum_w > 1e-10:
+        weights /= sum_w
+    else:
+        weights = np.ones(num_assets) / num_assets
+    
     # Calculate metrics
     metrics = calculate_metrics(weights, expected_returns, cov_matrix, dividend_yields, inflation, tax_rate, risk_free_rate, use_sharpe, use_inflation, use_tax_rate, use_advanced_metrics)
     
