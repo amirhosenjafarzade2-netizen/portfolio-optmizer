@@ -26,7 +26,6 @@ st.warning("This is for educational purposes only. Not financial advice. Consult
 # Save/Load inputs
 col1, col2 = st.columns(2)
 with col1:
-    # Filter session state to include only serializable keys
     serializable_state = {k: v for k, v in st.session_state.items() if k.startswith(('num_assets', 'asset_names', 'ret_', 'vol_', 'div_', 'tax_', 'corr_', 'price_', 'strike_', 'ttm_', 'ivol_', 'opt_type_')) or k == 'use_options_greeks'}
     st.download_button("Save Inputs", data=json.dumps(serializable_state), file_name="portfolio_inputs.json")
 with col2:
@@ -34,7 +33,6 @@ with col2:
     if uploaded_file:
         try:
             data = json.load(uploaded_file)
-            # Only update valid keys to avoid injecting unexpected data
             valid_keys = set(st.session_state.keys()) | set(['num_assets', 'asset_names', 'use_options_greeks'] + [f'ret_{i}' for i in range(10)] + [f'vol_{i}' for i in range(10)] + [f'div_{i}' for i in range(10)] + [f'tax_{i}' for i in range(10)] + [f'corr_{i}_{j}' for i in range(10) for j in range(i+1, 10)] + [f'price_{i}' for i in range(10)] + [f'strike_{i}' for i in range(10)] + [f'ttm_{i}' for i in range(10)] + [f'ivol_{i}' for i in range(10)] + [f'opt_type_{i}' for i in range(10)])
             for k, v in data.items():
                 if k in valid_keys:
@@ -228,32 +226,29 @@ with st.expander("Per Asset Metrics", expanded=True):
             implied_vols.append(implied_vol)
             option_types.append(option_type)
 
-# Correlation Matrix
-with st.expander("Correlation Matrix", expanded=False):
-    use_correlations = st.checkbox("Use Correlations", value=True)
-    correlations = np.eye(num_assets)
-    if use_correlations:
-        st.subheader("Correlation Matrix")
-        default_corr = st.checkbox("Use default correlation (0.2 for all pairs)", value=False)
-        if default_corr:
-            correlations = np.ones((num_assets, num_assets)) * 0.2
-            np.fill_diagonal(correlations, 1.0)
-        else:
-            corr_df = pd.DataFrame(np.eye(num_assets), index=asset_names, columns=asset_names)
-            cols = st.columns(2)
-            for i in range(num_assets):
-                for j in range(i+1, num_assets):
-                    with cols[(i+j) % 2]:
-                        corr = st.number_input(
-                            f"Correlation: {asset_names[i]} - {asset_names[j]}",
-                            value=0.0,
-                            min_value=-1.0,
-                            max_value=1.0,
-                            key=f"corr_{i}_{j}"
-                        )
-                        corr_df.iloc[i, j] = corr
-                        corr_df.iloc[j, i] = corr
-            correlations = corr_df.values
+# Correlation matrix
+with st.expander("Correlation Matrix", expanded=True):
+    use_correlations = st.checkbox("Use custom correlations", value=True)
+    default_corr = st.checkbox("Use default correlation (0.2 for all pairs)", value=False)
+    if default_corr or not use_correlations:
+        correlations = np.ones((num_assets, num_assets)) * 0.2
+        np.fill_diagonal(correlations, 1.0)
+    else:
+        corr_df = pd.DataFrame(np.eye(num_assets), index=asset_names, columns=asset_names)
+        cols = st.columns(2)
+        for i in range(num_assets):
+            for j in range(i+1, num_assets):
+                with cols[(i+j) % 2]:
+                    corr = st.number_input(
+                        f"Correlation: {asset_names[i]} - {asset_names[j]}",
+                        value=0.0,
+                        min_value=-1.0,
+                        max_value=1.0,
+                        key=f"corr_{i}_{j}"
+                    )
+                    corr_df.iloc[i, j] = corr
+                    corr_df.iloc[j, i] = corr
+        correlations = corr_df.values
 
 # Input format
 with st.expander("Input Format", expanded=True):
@@ -342,16 +337,24 @@ if st.button("Optimize Portfolio"):
             )
             progress_bar.progress(0.5)
 
+            # Normalize metrics to dict format for consistent display
+            normalized_metrics = {}
+            for k, v in metrics.items():
+                if isinstance(v, dict):
+                    normalized_metrics[k] = v
+                else:
+                    normalized_metrics[k] = {'mean': v}
+
             if use_options_greeks and all(v is not None for v in asset_prices + strike_prices + times_to_maturity + implied_vols):
                 greeks = calculate_portfolio_greeks(
                     weights, np.array(asset_prices), np.array(strike_prices),
                     np.array(times_to_maturity), np.array(implied_vols),
                     risk_free_rate, option_types
                 )
-                metrics.update(greeks)
+                for k, v in greeks.items():
+                    normalized_metrics[k] = {'mean': v}
 
             if use_stochastic:
-                from stochastic import simulate_scenarios
                 return_stds = np.array(expected_returns) * std_factor
                 vol_stds = np.array(volatilities) * std_factor
                 div_stds = np.array(dividend_yields) * std_factor
@@ -360,15 +363,14 @@ if st.button("Optimize Portfolio"):
                     np.array(dividend_yields), div_stds, inflation, np.array(tax_rates), risk_free_rate,
                     use_sharpe, use_inflation, use_tax_rate, use_advanced_metrics, num_simulations
                 )
-                metrics.update(stochastic_metrics)
+                normalized_metrics.update(stochastic_metrics)
 
             if use_multiperiod:
-                from multiperiod import multiperiod_simulation
                 mp_metrics = multiperiod_simulation(
                     weights, np.array(expected_returns), np.array(volatilities), correlations,
                     horizon, rebalance_freq, num_mp_sim
                 )
-                metrics.update(mp_metrics)
+                normalized_metrics.update(mp_metrics)
 
             progress_bar.progress(1.0)
         except ValueError as ve:
@@ -394,14 +396,20 @@ if st.button("Optimize Portfolio"):
 
     # Metrics display
     with st.expander("Portfolio Metrics", expanded=True):
-        if not use_stochastic:
-            metrics_df = pd.DataFrame(list(metrics.items()), columns=['Metric', 'Value'])
-            metrics_df['Value'] = metrics_df['Value'].apply(lambda x: f"{x:.4f}")
-            st.table(metrics_df)
-        else:
-            # Display stochastic as table with percentiles
-            sto_df = pd.DataFrame(metrics).T  # rows metrics, columns mean p5 p50 p95
-            st.table(sto_df)
+        # Display all metrics as a table with mean, p5, p50, p95 where applicable
+        display_data = {}
+        for metric, values in normalized_metrics.items():
+            display_data[metric] = {
+                'Mean': values['mean'],
+                'P5': values.get('p5', '-'),
+                'P50': values.get('p50', '-'),
+                'P95': values.get('p95', '-')
+            }
+        metrics_df = pd.DataFrame(display_data).T
+        metrics_df['Mean'] = metrics_df['Mean'].apply(lambda x: f"{x:.4f}")
+        for col in ['P5', 'P50', 'P95']:
+            metrics_df[col] = metrics_df[col].apply(lambda x: f"{x:.4f}" if isinstance(x, (int, float)) else x)
+        st.table(metrics_df)
 
     # Correlation heatmap
     if use_correlations:
@@ -424,20 +432,20 @@ if st.button("Optimize Portfolio"):
                 portfolio_returns.append(port_ret)
                 portfolio_vols.append(port_vol)
 
-            fig_ef = plot_efficient_frontier(portfolio_returns, portfolio_vols, metrics.get('Portfolio Return', 0), metrics.get('Portfolio Volatility', 0), asset_names)
+            fig_ef = plot_efficient_frontier(portfolio_returns, portfolio_vols, normalized_metrics.get('Portfolio Return', {}).get('mean', 0), normalized_metrics.get('Portfolio Volatility', {}).get('mean', 0), asset_names)
             st.pyplot(fig_ef)
             plt.close(fig_ef)
 
     # Stochastic histograms if enabled
     if use_stochastic:
         with st.expander("Stochastic Distributions", expanded=False):
-            fig_ret = plot_histogram(metrics['Portfolio Return']['samples'], "Distribution of Portfolio Returns")
+            fig_ret = plot_histogram(normalized_metrics['Portfolio Return']['samples'], "Distribution of Portfolio Returns")
             st.pyplot(fig_ret)
             plt.close(fig_ret)
 
     # Multiperiod if enabled
     if use_multiperiod:
         with st.expander("Multi-Period Simulation", expanded=False):
-            fig_wealth = plot_histogram(metrics['Final Wealth']['samples'], "Distribution of Final Portfolio Wealth")
+            fig_wealth = plot_histogram(normalized_metrics['Final Wealth']['samples'], "Distribution of Final Portfolio Wealth")
             st.pyplot(fig_wealth)
             plt.close(fig_wealth)
