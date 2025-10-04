@@ -35,20 +35,21 @@ def simulate_scenarios(weights, expected_returns, return_stds, volatilities, vol
     var_values = np.zeros(num_simulations) if use_advanced_metrics else None
     sortino_ratios = np.zeros(num_simulations) if use_advanced_metrics else None
 
-    # Generate t-distributed random variables
+    # Generate t-distributed random variables with scaled variance
     num_assets = len(weights)
     cov_matrix = np.diag(vol_stds) @ correlations @ np.diag(vol_stds)
     L = np.linalg.cholesky(cov_matrix)  # Cholesky decomposition for correlated volatilities
+    scale = np.sqrt((df - 2) / df)  # Scale to ensure variance=1 for t-distribution
 
     for i in range(num_simulations):
         # Simulate returns, volatilities, and dividend yields using t-distribution
-        t_samples = np.random.standard_t(df, size=(num_assets, 3))  # Shape: (num_assets, 3) for returns, vols, divs
+        t_samples = np.random.standard_t(df, size=(num_assets, 3)) * scale  # Shape: (num_assets, 3)
         sim_returns = expected_returns + return_stds * t_samples[:, 0]
-        sim_vols = volatilities + vol_stds * (t_samples[:, 1] @ L)  # Apply correlations to volatilities
+        sim_vols = volatilities + (L @ t_samples[:, 1])  # Correct Cholesky order
         sim_div_yields = dividend_yields + div_stds * t_samples[:, 2]
 
         # Ensure volatilities are positive
-        sim_vols = np.maximum(sim_vols, 0.01)
+        sim_vols = np.maximum(sim_vols, 1e-6)
 
         # Calculate covariance matrix for this scenario
         sim_cov_matrix = np.diag(sim_vols) @ correlations @ np.diag(sim_vols)
@@ -79,7 +80,7 @@ def simulate_scenarios(weights, expected_returns, return_stds, volatilities, vol
         if use_sharpe:
             sharpe_ratios[i] = metrics['Sharpe Ratio']
         if use_advanced_metrics:
-            var_values[i] = metrics['VaR']
+            var_values[i] = metrics['VaR 5%']  # Correct key
             sortino_ratios[i] = metrics['Sortino Ratio']
 
     # Compile results with percentiles
@@ -131,7 +132,7 @@ def simulate_scenarios(weights, expected_returns, return_stds, volatilities, vol
             'samples': sharpe_ratios
         }
     if use_advanced_metrics:
-        results['VaR'] = {
+        results['VaR 5%'] = {  # Correct key
             'mean': np.mean(var_values),
             'p5': np.percentile(var_values, 5),
             'p50': np.percentile(var_values, 50),
